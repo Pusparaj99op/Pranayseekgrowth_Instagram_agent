@@ -2,63 +2,86 @@ import logging
 
 import anthropic
 
-from app import config
+from app import config, skills
 
 log = logging.getLogger("claude")
 
 RULES = """You reply on Instagram as the account owner of @pranayseekgrowth. You are not an assistant; you are them.
 
-Rules:
-- Sound like a real person typing on a phone. Short. 1-2 sentences for comments, max 3 for DMs.
-- Match the voice profile below. Use their words, not polished marketing words.
-- No em dashes. No "Great question!", "Absolutely!", "I'd be happy to", "delve", "elevate", "game-changer".
-- At most one emoji, and only if the voice profile uses them.
+You are replying LIVE to one {label}. The skill playbook below was written for drafting batches; apply its judgement to this single message, but output only the one reply you would send, nothing else. No triage table, no options, no labels, no quotes.
+
+Hard rules (these win over the playbook):
+- Sound like a real person typing on a phone. 1-2 sentences for comments, max 3 for DMs.
 - Never invent numbers, results, prices, clients, links or promises.
-- If the message asks about pricing, payments, refunds, a complaint, anything legal/medical/personal, or anything you are unsure about, reply with a short line saying you'll get back to them personally, e.g. "let me check and get back to you on this one".
-- If the message is spam, a bot, a scam, hate, or needs no reply (e.g. just an emoji under a post), output exactly: SKIP
-- Output only the reply text. No quotes, no explanations.
+- Pricing, payments, refunds, complaints, legal/medical/personal topics, or anything unsure: say you'll get back to them personally.
+- Spam, bots, scams, hate, or nothing worth answering: output exactly SKIP
 
 VOICE PROFILE:
 {voice}
+
+SKILL PLAYBOOK ({skill}):
+{playbook}
 """
 
 _client: anthropic.Anthropic | None = None
 
 
-def _get_client() -> anthropic.Anthropic:
+def client() -> anthropic.Anthropic:
     global _client
     if _client is None:
         _client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     return _client
 
 
-def _voice() -> str:
-    try:
-        return config.VOICE_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return "(no voice profile yet: keep it casual, friendly, direct)"
+def build_system(kind: str) -> str:
+    skill = "ig-dm" if kind == "dm" else "ig-reply"
+    return RULES.format(
+        label="Instagram DM" if kind == "dm" else "comment on your post",
+        voice=skills.voice(),
+        skill=skill,
+        playbook=skills.load_skill(skill),
+    )
+
+
+def _ask(system: str, messages: list[dict]) -> str:
+    resp = client().messages.create(
+        model=config.CLAUDE_MODEL, max_tokens=400, system=system, messages=messages
+    )
+    return "".join(b.text for b in resp.content if b.type == "text").strip().strip('"')
 
 
 def generate_reply(kind: str, text: str, history: list[tuple[str, str]] | None = None) -> str | None:
     """kind is 'dm' or 'comment'. Returns None when the bot should not reply."""
-    messages = []
-    for role, past in history or []:
-        messages.append({"role": "assistant" if role == "me" else "user", "content": past})
-    label = "Instagram DM" if kind == "dm" else "Comment on your post"
-    messages.append({"role": "user", "content": f"[{label}]\n{text}"})
+    messages = [
+        {"role": "assistant" if role == "me" else "user", "content": past}
+        for role, past in history or []
+    ]
+    messages.append({"role": "user", "content": text})
     while messages and messages[0]["role"] != "user":
         messages.pop(0)
+    messages = _merge_same_role(messages)
+    system = build_system(kind)
 
-    resp = _get_client().messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=300,
-        system=RULES.format(voice=_voice()),
-        messages=_merge_same_role(messages),
-    )
-    reply = "".join(b.text for b in resp.content if b.type == "text").strip()
-    reply = reply.replace("—", ",").replace("–", "-").strip('"')
-    if not reply or reply.upper().startswith("SKIP"):
+    draft = _ask(system, messages)
+    if not draft or draft.upper().startswith("SKIP"):
         return None
+    reply = skills.humanize(draft)
+    score, verdict, notes = skills.human_score(reply)
+
+    if verdict == "FLAGGED":
+        retry_msgs = messages + [
+            {"role": "assistant", "content": draft},
+            {"role": "user", "content": "That reads machine-written. Detector notes: "
+             f"{notes}. Rewrite it plainer and more like the voice profile. Output only the reply."},
+        ]
+        second = _ask(system, retry_msgs)
+        if second and not second.upper().startswith("SKIP"):
+            second = skills.humanize(second)
+            s2, v2, _ = skills.human_score(second)
+            if s2 > score:
+                reply, score, verdict = second, s2, v2
+
+    log.info("human score %.0f %s", score, verdict)
     return reply
 
 

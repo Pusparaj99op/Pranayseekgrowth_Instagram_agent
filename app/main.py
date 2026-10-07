@@ -3,10 +3,11 @@ import hmac
 import json
 import logging
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
-from app import config, handlers
+from app import agent, config, handlers, skills
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -40,3 +41,29 @@ async def webhook(request: Request, background: BackgroundTasks):
         raise HTTPException(status_code=401, detail="bad signature")
     background.add_task(handlers.handle_payload, json.loads(body))
     return {"received": True}
+
+
+class SkillRequest(BaseModel):
+    input: str
+
+
+def require_admin(authorization: str | None) -> None:
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    if not config.ADMIN_API_KEY or not hmac.compare_digest(token, config.ADMIN_API_KEY):
+        raise HTTPException(status_code=401, detail="missing or wrong ADMIN_API_KEY")
+
+
+@app.get("/ai/skills")
+def ai_skills(authorization: str | None = Header(default=None)):
+    require_admin(authorization)
+    return skills.list_skills()
+
+
+@app.post("/ai/{name}")
+def ai_run(name: str, req: SkillRequest, authorization: str | None = Header(default=None)):
+    require_admin(authorization)
+    try:
+        skills.skill_dir(name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown skill {name}")
+    return {"skill": name, "output": agent.run_skill(name, req.input)}

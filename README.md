@@ -56,6 +56,34 @@ In the Meta app: Instagram > API setup > **Configure webhooks**
 While the app is in **Development** mode, it only receives events from people who have a role on the app (you and your testers).
 To reply to everyone, switch the app to **Live** and submit for App Review with `instagram_business_manage_messages` and `instagram_business_manage_comments`. You'll need a privacy policy URL and a short screen recording of the bot working.
 
+## Skills in this repo
+All 13 skills from [instagram-agent-skill](https://github.com/Jakeschincariol/instagram-agent-skill) are installed in `.claude/skills/`. Open this repo in Claude Code and `/ig-reel`, `/ig-caption`, `/ig-carousel`, `/ig-story`, `/ig-plan`, `/ig-viral`, `/ig-human`, `/ig-audit`, `/ig-profile`, `/ig-comment`, `/ig-reply`, `/ig-dm` and `/ig-repurpose` work right away. No install step.
+
+The live bot uses them too:
+- **DM replies** follow the `ig-dm` playbook. **Comment replies** follow `ig-reply`.
+- Every reply goes through `ig-human`: its `humanize.py` strips em dashes, slop words and invisible characters. `detect.py` then scores the reply, and if it gets FLAGGED, Claude rewrites it once.
+
+## Use the AI skills (API and CLI)
+Your deployed app can run any skill, including the skill's own scripts (`hookscore.py`, `beats.py`, `caption.py`, `swipe.py`, etc.). Claude runs those scripts instead of guessing their results.
+
+```bash
+# list the skills
+curl -H "Authorization: Bearer $ADMIN_API_KEY" https://<your-app>.onrender.com/ai/skills
+
+# write a reel
+curl -X POST https://<your-app>.onrender.com/ai/ig-reel \
+  -H "Authorization: Bearer $ADMIN_API_KEY" -H "Content-Type: application/json" \
+  -d '{"input": "I helped a client go from 200 to 12k followers in 6 weeks"}'
+```
+
+From your computer:
+```bash
+python -m app.cli list
+python -m app.cli ig-reel "I helped a client go from 200 to 12k followers in 6 weeks"
+python -m app.cli ig-caption "caption for the reel above: ..."
+```
+These only return text. Nothing gets posted until you post it yourself. Set `ADMIN_API_KEY` in Render so nobody else can use your endpoints.
+
 ## Run locally
 ```bash
 pip install -r requirements.txt

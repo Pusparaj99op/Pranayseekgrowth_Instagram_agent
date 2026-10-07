@@ -25,6 +25,7 @@ DRY_RUN = _bool("DRY_RUN", "true")
 REPLY_TO_DMS = _bool("REPLY_TO_DMS", "true")
 REPLY_TO_COMMENTS = _bool("REPLY_TO_COMMENTS", "true")
 MAX_REPLIES_PER_USER_PER_HOUR = int(os.getenv("MAX_REPLIES_PER_USER_PER_HOUR", "10"))
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 
 DB_PATH = os.getenv("DB_PATH", str(ROOT / "bot.db"))
 VOICE_PATH = Path(os.getenv("VOICE_PATH", str(ROOT / "config" / "voice.md")))
